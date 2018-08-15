@@ -7,68 +7,19 @@ library(pracma)
 sc <- import("scipy")
 
 
-
-# The data consists of magnetic resonance (MR) images (MRI) divided into two cohorts:
-# 1) Training Set;
-# 2) Test Set.
-# The Training Set consists of five subjects, four of which had four time-points,
-# while the fifth subject had five time-points.
-# The Test Setincludes fourteen subjects, ten of which had four time-points,
-# three had five time-points, and one had six time-points.
-# Two consecutive time-points are separated by approximately one year for all subjects.
-
-# Atlas directory containing atlasXX_T1.nii, atlasXX_FL.nii, atlasXX_mask.nii.gz etc.
-# XX=1,2,3...
-atlas_dir <- "lesion_challenge"
-n_atlas <- 1
-psize <- 35
-model_dir <- "saved_models"
-
-##
-
-patchsize <- c(psize, psize)
-padsize <- max(patchsize + 1) / 2
-num_patches <- 0
-
-for (i in 1:n_atlas) {
-  p <-
-    readnii(file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz")))
-  num_patches <- num_patches + img_data(p) %>% sum()
-}
-
-cat("Total number of lesion patches =" , num_patches, "\n")
-
-matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
-
-
-#for i in range(0, numatlas):
-# remove
-i <- 1
-t1name <- file.path(atlas_dir, paste0("atlas", i, "_T1.nii.gz"))
-cat("Reading", t1name, "\n")
-t1 <- readnii(t1name) %>% img_data()
-flname <- file.path(atlas_dir, paste0("atlas", i, "_FL.nii.gz"))
-cat("Reading", flname, "\n")
-fl <- readnii(flname) %>% img_data()
-maskname <- file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz"))
-cat("Reading", maskname, "\n")
-mask <- readnii(maskname) %>% img_data()
-
-dim(t1)
+# Functions ---------------------------------------------------------------
 
 normalize_image <- function(vol, contrast) {
   temp <- vol[vol != 0]
-  length(temp)
   q <- quantile(temp, .99)
   temp <- temp[temp <= q]
-  length(temp)
   bw <- q / 80
-  gridsize <- 128 ## scipy rounds up 80 to 128
+  gridsize <- 128 ## scipy rounds up from 80 to 128
   cat("99th quantile is",
       q,
       ", bandwidth =",
       bw,
-      "gridsize =",
+      ", gridsize =",
       gridsize,
       "\n")
   kde <- bkde(temp, bandwidth = bw, gridsize = gridsize)
@@ -88,9 +39,6 @@ normalize_image <- function(vol, contrast) {
   peak
 }
 
-t1 <- t1 / normalize_image(t1, 'T1')
-fl <- fl / normalize_image(fl, 'FL')
-
 pad_image <- function(vol, padsize) {
   dim_orig <- dim(vol)
   dim_pad <- dim_orig + 2 * padsize
@@ -99,13 +47,6 @@ pad_image <- function(vol, padsize) {
          (padsize + 1):(dim_orig[3] + padsize)] <- vol
   padded
 }
-
-
-padded_t1 <- pad_image(t1, padsize)
-padded_fl <- pad_image(fl, padsize)
-padded_mask <- pad_image(mask, padsize)
-
-cat("T1 padded to dim: ", dim(padded_t1), "\n")
 
 get_patches <- function(invol1, invol2, mask, patchsize) {
   dsize <- floor(patchsize / 2)
@@ -140,36 +81,87 @@ get_patches <- function(invol1, invol2, mask, patchsize) {
   list(t1_patches, fl_patches, mask_patches)
 }
 
-c(t1_patches_a, fl_patches_a, mask_patches_a) %<-% get_patches(padded_t1, padded_fl, padded_mask, patchsize)
 
-cat("Dim of T1 patches:", dim(t1_patches_a), "\n")
+# Configuration -----------------------------------------------------------
 
-pdim <- dim(t1_patches_a)
-count2 <- pdim[1]
-count1 <- 1
+atlas_dir <- "lesion_challenge"
+n_atlas <- 1
+psize <- 35
+model_dir <- "saved_models"
 
-cat("Atlas ", i, "indices:", count1, count2)
+patchsize <- c(psize, psize)
+padsize <- max(patchsize + 1) / 2
+
+
+# Read data ---------------------------------------------------------------
+
+num_patches <- 0
+for (i in 1:n_atlas) {
+  p <-
+    readnii(file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz")))
+  num_patches <- num_patches + img_data(p) %>% sum()
+}
+
+cat("Total number of lesion patches =" , num_patches, "\n")
+
+matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
 
 t1_patches <- array(0, dim = matsize)
 fl_patches <- array(0, dim = matsize)
 mask_patches <- array(0, dim = matsize)
-t1_patches[count1:count2, , , ] <- t1_patches_a
-fl_patches[count1:count2, , , ] <- fl_patches_a
-mask_patches[count1:count2, , , ] <- mask_patches_a
-count1 < count1 + pdim[1]
 
-cat("Total number of patches collected = ", count2)
-cat("Size of the input matrix is ", dim(mask_patches))
+count2 <- 1
+count1 <- 1
 
-##
+for (i in 1:n_atlas) {
+  t1name <- file.path(atlas_dir, paste0("atlas", i, "_T1.nii.gz"))
+  cat("Reading", t1name, "\n")
+  t1 <- readnii(t1name) %>% img_data()
+  flname <- file.path(atlas_dir, paste0("atlas", i, "_FL.nii.gz"))
+  cat("Reading", flname, "\n")
+  fl <- readnii(flname) %>% img_data()
+  maskname <-
+    file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz"))
+  cat("Reading", maskname, "\n")
+  mask <- readnii(maskname) %>% img_data()
+  
+  t1 <- t1 / normalize_image(t1, 'T1')
+  fl <- fl / normalize_image(fl, 'FL')
+  
+  padded_t1 <- pad_image(t1, padsize)
+  padded_fl <- pad_image(fl, padsize)
+  padded_mask <- pad_image(mask, padsize)
+  
+  cat("T1 orig dim: ", dim(t1), "\n")
+  cat("T1 padded to dim: ", dim(padded_t1), "\n")
+  
+  c(t1_patches_a, fl_patches_a, mask_patches_a) %<-% get_patches(padded_t1, padded_fl, padded_mask, patchsize)
+  
+  cat("Dim of T1 patches:", dim(t1_patches_a), "\n")
+  
+  pdim <- dim(t1_patches_a)
+  count2 <- count1 + pdim[1] - 1
+  cat("Atlas", i, "indices:", count1, count2, "\n")
+  
+  t1_patches[count1:count2, , , ] <- t1_patches_a
+  fl_patches[count1:count2, , , ] <- fl_patches_a
+  mask_patches[count1:count2, , , ] <- mask_patches_a
+  count1 < count1 + pdim[1]
+  
+}
+
+cat("Total number of patches collected = ", count2, "\n")
+cat("Size of the input matrix is ", dim(mask_patches), "\n")
+
+
+# Model -------------------------------------------------------------------
+
 ds <- 2
 num_filters <- 128
 kernel_size_1 <- 3
 kernel_size_2 <- 5
 
-##
 batch_size <- 128
-
 
 conv_chain <- function(prev_layer,
                        ds,
@@ -250,9 +242,36 @@ combined <- concat %>%
     filters = 1,
     kernel_size = 3,
     activation = "relu",
-    padding = "same"
+    padding = "same",
+    name = "conv_final"
   )
 
 model <-
   keras_model(inputs = list(t1_input, fl_input), outputs = combined)
-model %>% compile(optimizer = optimizer_adam(lr =  0.0001), loss = "mean_squared_error")
+model %>% compile(
+  optimizer = optimizer_adam(lr =  0.0001),
+  loss = "mean_squared_error",
+  metrics = c("mean_squared_error")
+)
+
+history <- model %>% fit(
+  x = list(t1_patches, fl_patches),
+  y = mask_patches,
+  batch_size = batch_size,
+  epochs = 10,
+  validation_split = 0.3
+)
+
+plot(history, metrics = "loss")
+
+preds <-
+  model %>% predict(list(t1_patches[1:10, , , , drop = FALSE],
+                         fl_patches[1:10, , , , drop = FALSE]))
+dim(preds)
+true <- mask_patches[1:10, , , , drop = FALSE]
+cor(true, preds)
+preds[1, , , ]
+preds[1, , , ] %>% image(col = grey.colors(n=10))
+true[1, , , ]
+true[1, , , ] %>% image(col = grey.colors(n=10))
+
