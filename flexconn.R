@@ -3,6 +3,7 @@ library(neurobase)
 library(KernSmooth)
 library(reticulate)
 library(pracma)
+library(RNifti)
 
 sc <- import("scipy")
 
@@ -32,7 +33,7 @@ normalize_image <- function(vol, contrast) {
   if (contrast == "T1") {
     peak <- peaks[length(peaks)]
   } else if (contrast %in% c("T2", "PD", "FL")) {
-    peak_height <- which.max(heights)
+    # peak_height <- which.max(heights)
     peak <- peaks[which.max(heights)]
   }
   cat("Peak found at", peak, "for", contrast, "\n")
@@ -64,6 +65,7 @@ get_patches <- function(invol1, invol2, mask, patchsize) {
   blurmask <-
     sc$ndimage$filters$gaussian_filter(mask, sigma = c(1, 1, 1))
   blurmask[blurmask < 0.0001] <- 0
+  stopifnot(!all(blurmask == 0))
   blurmask <- blurmask * 100
   t1_patches <- array(0, dim = matsize)
   fl_patches <- array(0, dim = matsize)
@@ -117,28 +119,32 @@ measurements <- c(
 
 # Read data ---------------------------------------------------------------
 
-saved_patches_exist <- TRUE
+rerun <- FALSE
 
-if(!saved_patches_exist) {
+patch_files = c("t1_patches.rds", "fl_patches.rds", "mask_patches.rds")
+
+
+if(!all(file.exists(patch_files)) || rerun ) {
+  rerun_index = TRUE
   num_patches <- 0
   mask_files <-  list.files(atlas_dir, pattern = "mask1.nii")
   for (f in mask_files) {
     p <-
       readnii(file.path(atlas_dir, f))
-    num_patches <- num_patches + img_data(p) %>% sum()
+    num_patches <- num_patches + sum(p)
   }
-  
+
   cat("Total number of lesion patches =" , num_patches, "\n")
-  
+
   matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
-  
+
   t1_patches <- array(0, dim = matsize)
   fl_patches <- array(0, dim = matsize)
   mask_patches <- array(0, dim = matsize)
-  
+
   count2 <- 1
   count1 <- 1
-  
+
   for (i in seq_along(measurements)) {
     t1name <- file.path(atlas_dir, paste0(measurements[i], "_mprage_pp.nii"))
     cat("Reading", t1name, "\n")
@@ -150,55 +156,57 @@ if(!saved_patches_exist) {
       file.path(atlas_dir, paste0(measurements[i], "_mask1.nii"))
     cat("Reading", maskname, "\n")
     mask <- readnii(maskname) %>% img_data()
-    
+
     t1 <- t1 / normalize_image(t1, 'T1')
     fl <- fl / normalize_image(fl, 'FL')
-    
+
     padded_t1 <- pad_image(t1, padsize)
     padded_fl <- pad_image(fl, padsize)
     padded_mask <- pad_image(mask, padsize)
-    
+
     cat("T1 orig dim: ", dim(t1), "\n")
     cat("T1 padded to dim: ", dim(padded_t1), "\n")
-    
+
     c(t1_patches_a, fl_patches_a, mask_patches_a) %<-% get_patches(padded_t1, padded_fl, padded_mask, patchsize)
 
     pdim <- dim(t1_patches_a)
     count2 <- count1 + pdim[1] - 1
     cat("Atlas", i, "indices:", count1, count2, "\n")
-    
+
     t1_patches[count1:count2, , , ] <- t1_patches_a
     fl_patches[count1:count2, , , ] <- fl_patches_a
     mask_patches[count1:count2, , , ] <- mask_patches_a
     count1 <- count1 + pdim[1]
-    
+
   }
-  
+
   cat("Total number of patches collected = ", count2, "\n")
   cat("Size of the input matrix is ", dim(mask_patches), "\n")
-  
+
   saveRDS(t1_patches, "t1_patches.rds")
   saveRDS(fl_patches, "fl_patches.rds")
   saveRDS(mask_patches, "mask_patches.rds")
-  
+
 } else {
-  
+
+  rerun_index = FALSE
   t1_patches <- readRDS("t1_patches.rds")
   fl_patches <- readRDS("fl_patches.rds")
   mask_patches <- readRDS("mask_patches.rds")
-  
+
   num_patches <- nrow(t1_patches)
-  
+
 }
 
 
 # Train-test split --------------------------------------------------------
-
-if(!saved_patches_exist) {
-  train_indx <- sample(1:num_patches, num_patches * 0.7)
-  saveRDS(train_indx, "train_index.rds")
+index_file = "train_index.rds"
+if (rerun_index || !file.exists(index_file)) {
+  set.seed(1)
+  train_indx <- sample(1:num_patches, floor(num_patches * 0.7))
+  saveRDS(train_indx, index_file)
 } else {
-  train_indx <- readRDS("train_index.rds")
+  train_indx <- readRDS(index_file)
 }
 
 c(t1_train, t1_test) %<-% list(t1_patches[train_indx, , , , drop = FALSE], t1_patches[-train_indx, , ,  , drop = FALSE])
@@ -261,7 +269,7 @@ conv_chain <- function(prev_layer,
       padding = "same",
       name = paste0(prefix, "_conv5")
     )
-  
+
 }
 
 t1_input <- layer_input(shape = shape(NULL, NULL, 1))
