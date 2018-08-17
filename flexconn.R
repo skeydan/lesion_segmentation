@@ -196,9 +196,9 @@ if(!saved_patches_exist) {
 
 
 train_indx <- sample(1:num_patches, num_patches * 0.7)
-c(t1_train, t1_test) %<-% list(t1_patches[train_indx], t1_patches[-train_indx])
-c(fl_train, fl_test) %<-% list(fl_patches[train_indx], fl_patches[-train_indx])
-c(mask_train, mask_test) %<-% list(mask_patches[train_indx], mask_patches[-train_indx])
+c(t1_train, t1_test) %<-% list(t1_patches[train_indx, , , , drop = FALSE], t1_patches[-train_indx, , ,  , drop = FALSE])
+c(fl_train, fl_test) %<-% list(fl_patches[train_indx, , ,  , drop = FALSE], fl_patches[-train_indx, , , , drop = FALSE])
+c(mask_train, mask_test) %<-% list(mask_patches[train_indx, , , , drop = FALSE], mask_patches[-train_indx, , ,  , drop = FALSE])
 
 
 
@@ -209,7 +209,7 @@ num_filters <- 128
 kernel_size_1 <- 3
 kernel_size_2 <- 5
 
-batch_size <- 128
+batch_size <- 1
 
 conv_chain <- function(prev_layer,
                        ds,
