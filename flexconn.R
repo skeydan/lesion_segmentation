@@ -1,5 +1,5 @@
 library(keras)
-?calllibrary(neurobase)
+library(neurobase)
 library(KernSmooth)
 library(reticulate)
 library(pracma)
@@ -53,6 +53,7 @@ get_patches <- function(invol1, invol2, mask, patchsize) {
   indx <- which(mask != 0, arr.ind = TRUE) %>% t()
   num_patches <- ncol(indx)
   cat("Number of patches used: ", num_patches, "\n")
+  matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
   randindx <- sample(1:num_patches, num_patches, replace = FALSE)
   newindx <- matrix(0, nrow = 3, ncol = num_patches)
   for (i in 1:num_patches) {
@@ -91,99 +92,113 @@ model_dir <- "saved_models"
 patchsize <- c(psize, psize)
 padsize <- max(patchsize + 1) / 2
 
+measurements <- c(
+  "training01_01",
+  "training01_02",
+  "training01_03",
+  "training01_04",
+  "training02_01",
+  "training02_02",
+  "training02_03",
+  "training02_04",
+  "training03_01",
+  "training03_02",
+  "training03_03",
+  "training03_04",
+  "training03_05",
+  "training04_01",
+  "training04_02",
+  "training04_03",
+  "training04_04",
+  "training05_01",
+  "training05_02",
+  "training05_03",
+  "training05_04")
 
 # Read data ---------------------------------------------------------------
 
-num_patches <- 0
-mask_files <-  list.files(atlas_dir, pattern = "mask1.nii")
-for (f in mask_files) {
-  p <-
-    readnii(file.path(atlas_dir, f))
-  num_patches <- num_patches + img_data(p) %>% sum()
-}
+saved_patches_exist <- FALSE
 
-cat("Total number of lesion patches =" , num_patches, "\n")
+if(!saved_patches_exist) {
+  num_patches <- 0
+  mask_files <-  list.files(atlas_dir, pattern = "mask1.nii")
+  for (f in mask_files) {
+    p <-
+      readnii(file.path(atlas_dir, f))
+    num_patches <- num_patches + img_data(p) %>% sum()
+  }
+  
+  cat("Total number of lesion patches =" , num_patches, "\n")
+  
+  matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
+  
+  t1_patches <- array(0, dim = matsize)
+  fl_patches <- array(0, dim = matsize)
+  mask_patches <- array(0, dim = matsize)
+  
+  count2 <- 1
+  count1 <- 1
+  
+  for (i in seq_along(measurements)) {
+    t1name <- file.path(atlas_dir, paste0(measurements[i], "_mprage_pp.nii"))
+    cat("Reading", t1name, "\n")
+    t1 <- readnii(t1name) %>% img_data()
+    flname <- file.path(atlas_dir, paste0(measurements[i], "_flair_pp.nii"))
+    cat("Reading", flname, "\n")
+    fl <- readnii(flname) %>% img_data()
+    maskname <-
+      file.path(atlas_dir, paste0(measurements[i], "_mask1.nii"))
+    cat("Reading", maskname, "\n")
+    mask <- readnii(maskname) %>% img_data()
+    
+    t1 <- t1 / normalize_image(t1, 'T1')
+    fl <- fl / normalize_image(fl, 'FL')
+    
+    padded_t1 <- pad_image(t1, padsize)
+    padded_fl <- pad_image(fl, padsize)
+    padded_mask <- pad_image(mask, padsize)
+    
+    cat("T1 orig dim: ", dim(t1), "\n")
+    cat("T1 padded to dim: ", dim(padded_t1), "\n")
+    
+    c(t1_patches_a, fl_patches_a, mask_patches_a) %<-% get_patches(padded_t1, padded_fl, padded_mask, patchsize)
 
-matsize <- c(num_patches, patchsize[1], patchsize[2], 1)
-
-t1_patches <- array(0, dim = matsize)
-fl_patches <- array(0, dim = matsize)
-mask_patches <- array(0, dim = matsize)
-
-count2 <- 1
-count1 <- 1
-
-measurements <- c(
-"training01_01",
-"training01_02",
-"training01_03",
-"training01_04",
-"training02_01",
-"training02_02",
-"training02_03",
-"training02_04",
-"training03_01",
-"training03_02",
-"training03_03",
-"training03_04",
-"training03_05",
-"training04_01",
-"training04_02",
-"training04_03",
-"training04_04",
-"training05_01",
-"training05_02",
-"training05_03",
-"training05_04")
-
-for (i in seq_along(measurements)) {
-  t1name <- file.path(atlas_dir, paste0(measurements[i], "_mprage_pp.nii"))
-  cat("Reading", t1name, "\n")
-  t1 <- readnii(t1name) %>% img_data()
-  flname <- file.path(atlas_dir, paste0(measurements[i], "_flair_pp.nii"))
-  cat("Reading", flname, "\n")
-  fl <- readnii(flname) %>% img_data()
-  maskname <-
-    file.path(atlas_dir, paste0(measurements[i], "_mask1.nii"))
-  cat("Reading", maskname, "\n")
-  mask <- readnii(maskname) %>% img_data()
+    pdim <- dim(t1_patches_a)
+    count2 <- count1 + pdim[1] - 1
+    cat("Atlas", i, "indices:", count1, count2, "\n")
+    
+    t1_patches[count1:count2, , , ] <- t1_patches_a
+    fl_patches[count1:count2, , , ] <- fl_patches_a
+    mask_patches[count1:count2, , , ] <- mask_patches_a
+    count1 <- count1 + pdim[1]
+    
+  }
   
-  t1 <- t1 / normalize_image(t1, 'T1')
-  fl <- fl / normalize_image(fl, 'FL')
+  cat("Total number of patches collected = ", count2, "\n")
+  cat("Size of the input matrix is ", dim(mask_patches), "\n")
   
-  padded_t1 <- pad_image(t1, padsize)
-  padded_fl <- pad_image(fl, padsize)
-  padded_mask <- pad_image(mask, padsize)
+  saveRDS(t1_patches, "t1_patches.rds")
+  saveRDS(fl_patches, "fl_patches.rds")
+  saveRDS(mask_patches, "mask_patches.rds")
   
-  cat("T1 orig dim: ", dim(t1), "\n")
-  cat("T1 padded to dim: ", dim(padded_t1), "\n")
+} else {
   
-  c(t1_patches_a, fl_patches_a, mask_patches_a) %<-% get_patches(padded_t1, padded_fl, padded_mask, patchsize)
+  t1_patches <- readRDS("t1_patches.rds")
+  fl_patches <- readRDS("fl_patches.rds")
+  mask_patches <- readRDS("mask_patches.rds")
   
-  cat("Dim of T1 patches:", dim(t1_patches_a), "\n")
-  
-  pdim <- dim(t1_patches_a)
-  count2 <- count1 + pdim[1] - 1
-  cat("Atlas", i, "indices:", count1, count2, "\n")
-  
-  t1_patches[count1:count2, , , ] <- t1_patches_a
-  fl_patches[count1:count2, , , ] <- fl_patches_a
-  mask_patches[count1:count2, , , ] <- mask_patches_a
-  count1 <- count1 + pdim[1]
+  num_patches <- length(t1_patches)
   
 }
 
-cat("Total number of patches collected = ", count2, "\n")
-cat("Size of the input matrix is ", dim(mask_patches), "\n")
 
-saveRDS(t1_patches, "t1_patches.rds")
-saveRDS(fl_patches, "fl_patches.rds")
-saveRDS(mask_patches, "mask_patches.rds")
+# Train-test split --------------------------------------------------------
 
-t1_patches <- readRDS("t1_patches.rds")
-fl_patches <- readRDS("fl_patches.rds")
-mask_patches <- readRDS("mask_patches.rds")
 
+train_indx <- sample(1:num_patches, num_patches * 0.7)
+c(t1_train, t1_test) %<-% list(t1_patches[train_indx], t1_patches[-train_indx])
+c(fl_train, fl_test) %<-% list(fl_patches[train_indx], fl_patches[-train_indx])
+c(mask_train, mask_test) %<-% list(mask_patches[train_indx], mask_patches[-train_indx])
 
 
 
@@ -288,11 +303,11 @@ model %>% compile(
 )
 
 history <- model %>% fit(
-  x = list(t1_patches, fl_patches),
-  y = mask_patches,
+  x = list(t1_train, fl_train),
+  y = mask_train,
   batch_size = batch_size,
   epochs = 5,
-  validation_split = 0.2,
+  validation_split = 0.7,
   callbacks = list(callback_model_checkpoint(filepath = "weights.{epoch:02d}-{val_loss:.2f}.hdf5"),
                    callback_early_stopping(patience = 1))
 )
