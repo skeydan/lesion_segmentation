@@ -3,6 +3,7 @@ library(neurobase)
 library(KernSmooth)
 library(reticulate)
 library(pracma)
+library(RNifti)
 
 sc <- import("scipy")
 
@@ -32,7 +33,7 @@ normalize_image <- function(vol, contrast) {
   if (contrast == "T1") {
     peak <- peaks[length(peaks)]
   } else if (contrast %in% c("T2", "PD", "FL")) {
-    peak_height <- which.max(heights)
+    # peak_height <- which.max(heights)
     peak <- peaks[which.max(heights)]
   }
   cat("Peak found at", peak, "for", contrast, "\n")
@@ -118,15 +119,19 @@ measurements <- c(
 
 # Read data ---------------------------------------------------------------
 
-saved_patches_exist <- TRUE
+rerun <- FALSE
 
-if(!saved_patches_exist) {
+patch_files = c("t1_patches.rds", "fl_patches.rds", "mask_patches.rds")
+
+
+if(!all(file.exists(patch_files)) || rerun ) {
+  rerun_index = TRUE
   num_patches <- 0
   mask_files <-  list.files(atlas_dir, pattern = "mask1.nii")
   for (f in mask_files) {
     p <-
       readnii(file.path(atlas_dir, f))
-    num_patches <- num_patches + img_data(p) %>% sum()
+    num_patches <- num_patches + sum(p)
   }
 
   cat("Total number of lesion patches =" , num_patches, "\n")
@@ -184,6 +189,7 @@ if(!saved_patches_exist) {
 
 } else {
 
+  rerun_index = FALSE
   t1_patches <- readRDS("t1_patches.rds")
   fl_patches <- readRDS("fl_patches.rds")
   mask_patches <- readRDS("mask_patches.rds")
@@ -194,12 +200,13 @@ if(!saved_patches_exist) {
 
 
 # Train-test split --------------------------------------------------------
-
-if(!saved_patches_exist) {
-  train_indx <- sample(1:num_patches, num_patches * 0.7)
-  saveRDS(train_indx, "train_index.rds")
+index_file = "train_index.rds"
+if (rerun_index || !file.exists(index_file)) {
+  set.seed(1)
+  train_indx <- sample(1:num_patches, floor(num_patches * 0.7))
+  saveRDS(train_indx, index_file)
 } else {
-  train_indx <- readRDS("train_index.rds")
+  train_indx <- readRDS(index_file)
 }
 
 c(t1_train, t1_test) %<-% list(t1_patches[train_indx, , , , drop = FALSE], t1_patches[-train_indx, , ,  , drop = FALSE])
