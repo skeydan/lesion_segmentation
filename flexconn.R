@@ -1,5 +1,5 @@
 library(keras)
-library(neurobase)
+?calllibrary(neurobase)
 library(KernSmooth)
 library(reticulate)
 library(pracma)
@@ -85,7 +85,6 @@ get_patches <- function(invol1, invol2, mask, patchsize) {
 # Configuration -----------------------------------------------------------
 
 atlas_dir <- "lesion_challenge"
-n_atlas <- 1
 psize <- 35
 model_dir <- "saved_models"
 
@@ -96,9 +95,10 @@ padsize <- max(patchsize + 1) / 2
 # Read data ---------------------------------------------------------------
 
 num_patches <- 0
-for (i in 1:n_atlas) {
+mask_files <-  list.files(atlas_dir, pattern = "mask1.nii")
+for (f in mask_files) {
   p <-
-    readnii(file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz")))
+    readnii(file.path(atlas_dir, f))
   num_patches <- num_patches + img_data(p) %>% sum()
 }
 
@@ -113,15 +113,38 @@ mask_patches <- array(0, dim = matsize)
 count2 <- 1
 count1 <- 1
 
-for (i in 1:n_atlas) {
-  t1name <- file.path(atlas_dir, paste0("atlas", i, "_T1.nii.gz"))
+measurements <- c(
+"training01_01",
+"training01_02",
+"training01_03",
+"training01_04",
+"training02_01",
+"training02_02",
+"training02_03",
+"training02_04",
+"training03_01",
+"training03_02",
+"training03_03",
+"training03_04",
+"training03_05",
+"training04_01",
+"training04_02",
+"training04_03",
+"training04_04",
+"training05_01",
+"training05_02",
+"training05_03",
+"training05_04")
+
+for (i in seq_along(measurements)) {
+  t1name <- file.path(atlas_dir, paste0(measurements[i], "_mprage_pp.nii"))
   cat("Reading", t1name, "\n")
   t1 <- readnii(t1name) %>% img_data()
-  flname <- file.path(atlas_dir, paste0("atlas", i, "_FL.nii.gz"))
+  flname <- file.path(atlas_dir, paste0(measurements[i], "_flair_pp.nii"))
   cat("Reading", flname, "\n")
   fl <- readnii(flname) %>% img_data()
   maskname <-
-    file.path(atlas_dir, paste0("atlas", i, "_mask.nii.gz"))
+    file.path(atlas_dir, paste0(measurements[i], "_mask1.nii"))
   cat("Reading", maskname, "\n")
   mask <- readnii(maskname) %>% img_data()
   
@@ -146,12 +169,22 @@ for (i in 1:n_atlas) {
   t1_patches[count1:count2, , , ] <- t1_patches_a
   fl_patches[count1:count2, , , ] <- fl_patches_a
   mask_patches[count1:count2, , , ] <- mask_patches_a
-  count1 < count1 + pdim[1]
+  count1 <- count1 + pdim[1]
   
 }
 
 cat("Total number of patches collected = ", count2, "\n")
 cat("Size of the input matrix is ", dim(mask_patches), "\n")
+
+saveRDS(t1_patches, "t1_patches.rds")
+saveRDS(fl_patches, "fl_patches.rds")
+saveRDS(mask_patches, "mask_patches.rds")
+
+t1_patches <- readRDS("t1_patches.rds")
+fl_patches <- readRDS("fl_patches.rds")
+mask_patches <- readRDS("mask_patches.rds")
+
+
 
 
 # Model -------------------------------------------------------------------
@@ -258,8 +291,10 @@ history <- model %>% fit(
   x = list(t1_patches, fl_patches),
   y = mask_patches,
   batch_size = batch_size,
-  epochs = 10,
-  validation_split = 0.3
+  epochs = 5,
+  validation_split = 0.2,
+  callbacks = list(callback_model_checkpoint(filepath = "weights.{epoch:02d}-{val_loss:.2f}.hdf5"),
+                   callback_early_stopping(patience = 1))
 )
 
 plot(history, metrics = "loss")
