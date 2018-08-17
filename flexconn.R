@@ -117,7 +117,7 @@ measurements <- c(
 
 # Read data ---------------------------------------------------------------
 
-saved_patches_exist <- FALSE
+saved_patches_exist <- TRUE
 
 if(!saved_patches_exist) {
   num_patches <- 0
@@ -187,15 +187,20 @@ if(!saved_patches_exist) {
   fl_patches <- readRDS("fl_patches.rds")
   mask_patches <- readRDS("mask_patches.rds")
   
-  num_patches <- length(t1_patches)
+  num_patches <- nrow(t1_patches)
   
 }
 
 
 # Train-test split --------------------------------------------------------
 
+if(!saved_patches_exist) {
+  train_indx <- sample(1:num_patches, num_patches * 0.7)
+  saveRDS(train_indx, "train_index.rds")
+} else {
+  train_indx <- readRDS("train_index.rds")
+}
 
-train_indx <- sample(1:num_patches, num_patches * 0.7)
 c(t1_train, t1_test) %<-% list(t1_patches[train_indx, , , , drop = FALSE], t1_patches[-train_indx, , ,  , drop = FALSE])
 c(fl_train, fl_test) %<-% list(fl_patches[train_indx, , ,  , drop = FALSE], fl_patches[-train_indx, , , , drop = FALSE])
 c(mask_train, mask_test) %<-% list(mask_patches[train_indx, , , , drop = FALSE], mask_patches[-train_indx, , ,  , drop = FALSE])
@@ -203,6 +208,9 @@ c(mask_train, mask_test) %<-% list(mask_patches[train_indx, , , , drop = FALSE],
 
 
 # Model -------------------------------------------------------------------
+
+model_exists <- TRUE
+restore_path <- "weights.05-10.58.hdf5"
 
 ds <- 2
 num_filters <- 128
@@ -296,32 +304,48 @@ combined <- concat %>%
 
 model <-
   keras_model(inputs = list(t1_input, fl_input), outputs = combined)
+
 model %>% compile(
   optimizer = optimizer_adam(lr =  0.0001),
   loss = "mean_squared_error",
   metrics = c("mean_squared_error")
 )
 
-history <- model %>% fit(
-  x = list(t1_train, fl_train),
-  y = mask_train,
-  batch_size = batch_size,
-  epochs = 5,
-  validation_split = 0.7,
-  callbacks = list(callback_model_checkpoint(filepath = "weights.{epoch:02d}-{val_loss:.2f}.hdf5"),
-                   callback_early_stopping(patience = 1))
-)
+if(!model_exists) {
+  history <- model %>% fit(
+    x = list(t1_train, fl_train),
+    y = mask_train,
+    batch_size = batch_size,
+    epochs = 5,
+    validation_split = 0.7,
+    callbacks = list(callback_model_checkpoint(filepath = "weights.{epoch:02d}-{val_loss:.2f}.hdf5"),
+                     callback_early_stopping(patience = 1)))
+    saveRDS(history, "history.rds")
+} else {
+  model <- load_model_hdf5(restore_path)
+  history <- readRDS("history.rds")
+}
 
 plot(history, metrics = "loss")
 
-preds <-
-  model %>% predict(list(t1_patches[1:10, , , , drop = FALSE],
-                         fl_patches[1:10, , , , drop = FALSE]))
-dim(preds)
-true <- mask_patches[1:10, , , , drop = FALSE]
-cor(true, preds)
-preds[1, , , ]
-preds[1, , , ] %>% image(col = grey.colors(n=10))
-true[1, , , ]
-true[1, , , ] %>% image(col = grey.colors(n=10))
+par(mfrow = c(6,6))
+par(mar = c(0.5, 0.5, 0.5, 0.5),
+    xaxs = 'i',
+    yaxs = 'i')
+for (i in 1:36) {
+  preds <- model %>% predict(list(t1_test[i, , , , drop = FALSE],
+                         fl_test[i, , , , drop = FALSE]),
+                    batch_size = 1)
+  true <- mask_test[i, , , , drop = FALSE]
+  cor(true, preds) %>% print()
+  preds[1, , , ] %>% image(col = grey.colors(n=10),  xaxt = 'n',
+                           yaxt = 'n')
+  true[1, , , ] %>% image(col = grey.colors(n=10),  xaxt = 'n',
+                          yaxt = 'n')
+}
 
+
+model %>% evaluate(x = list(t1_test,
+                       fl_test),
+                   y = mask_test,
+                  batch_size = 1)
